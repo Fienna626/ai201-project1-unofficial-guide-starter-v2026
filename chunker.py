@@ -80,24 +80,73 @@ def fallback_split(
     return chunks
 
 
+def _cap(pieces: list[str]) -> list[str]:
+    """Split any piece over CHUNK_SIZE at the nearest sentence end."""
+    out: list[str] = []
+    for piece in pieces:
+        while len(piece) > config.CHUNK_SIZE:
+            cut = piece.rfind(". ", 0, config.CHUNK_SIZE)
+            if cut == -1:
+                break
+            out.append(piece[: cut + 1].strip())
+            piece = piece[cut + 2 :].strip()
+        out.append(piece)
+    return out
+
+
 def split_documents(documents: list[Document]) -> list[Chunk]:
     """
-    Split documents into chunks. ⚠️ REPLACE THE BODY OF THIS IN MILESTONE 3.
+    Split each document into paragraph-sized chunks, titled.
 
-    Right now it just calls the fallback. That is the plain, generic behaviour
-    the brief is talking about.
-
-    When you write your own strategy, set `produced_by` to
-    "chunker.py::split_documents" so your README's Sample Chunks section names
-    the right function. `app.py chunks` prints that string for you.
-
-    Things worth thinking about before you write any code:
-      - Are your documents short posts or long guides?
-      - Is the useful information in one sentence, or spread over a paragraph?
-      - Would splitting on paragraph breaks keep more thoughts intact than
-        splitting on a character count?
+    Every document in campus_life is a title line followed by one to four short
+    paragraphs, so paragraphs are the natural seam — a fixed character window
+    either cuts nothing (at 800) or slices off fragments (at 500). Short
+    paragraphs merge forward so nothing stands alone that can't answer a
+    question, and the title is repeated on every chunk so "$1.50" stays
+    attached to "Old Brewhouse".
     """
-    return fallback_split(documents)
+    chunks: list[Chunk] = []
+    for doc in documents:
+        paragraphs = [p.strip() for p in doc.text.split("\n\n") if p.strip()]
+        if not paragraphs:
+            continue
+
+        title = paragraphs[0]
+        body = paragraphs[1:]
+
+        # Merge paragraphs forward until each piece carries enough to stand
+        # alone. "The good: ..." on its own is 80 characters and answers
+        # nothing; joined to "The bad: ..." it's a usable thought.
+        pieces: list[str] = []
+        buffer = ""
+        for para in body:
+            buffer = f"{buffer}\n\n{para}" if buffer else para
+            if len(buffer) >= config.MIN_CHUNK_CHARS:
+                pieces.append(buffer)
+                buffer = ""
+
+        # Whatever is left over is too short to be its own chunk, so it joins
+        # the previous one rather than becoming a fragment.
+        if buffer:
+            if pieces:
+                pieces[-1] = f"{pieces[-1]}\n\n{buffer}"
+            else:
+                pieces.append(buffer)
+
+        if not pieces:
+            pieces = [title]
+
+        for index, piece in enumerate(_cap(pieces)):
+            chunks.append(
+                Chunk(
+                    text=f"{title}\n\n{piece}",
+                    source=doc.source,
+                    index=index,
+                    produced_by="chunker.py::split_documents",
+                )
+            )
+
+    return chunks
 
 
 def describe(chunks: list[Chunk]) -> str:

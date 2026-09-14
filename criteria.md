@@ -22,9 +22,11 @@ pipeline earns credit; *"80% seemed reasonable"* does not.
 For at least 4 of my 5 test questions, the retrieved chunks include one that
 contains the answer.
 
-**Why this target:**
-<!-- e.g. "One of my questions is about a topic only two documents mention, so
-     I expect that one to be hard." -->
+**Why this target:** Four of my five questions are answered by a single
+document, and one of them, the Old Brewhouse laundry question, competes
+against six other residence-hall laundry posts that are word-for-word identical
+except for the price and the payment method. I expect that one to lose to a
+near-duplicate, so I set the bar at 4 of 5 rather than 5 of 5.
 
 ---
 
@@ -32,16 +34,18 @@ contains the answer.
 
 Every answer the system produces names at least one source document.
 
-**Why this target:**
-<!-- Why all five and not four? What about your setup makes that achievable —
-     or what would have to go wrong for it not to be? -->
+**Why this target:** All five, because naming a source costs the pipeline
+nothing it doesn't already have — every chunk carries its `source` filename
+through `store.py` into the prompt, so citing one is a formatting requirement,
+not a retrieval problem. For this to miss, generation would have to ignore
+material it was handed, and that's a bug I'd want to see rather than budget for.
 
 ---
 
 ## 3. The relevance gate stops out-of-corpus questions
 
 When I ask a question my documents clearly don't cover, the relevance gate
-stops it and the system returns "I don't have enough information about that" —
+stops it and the system returns "I don't have enough information about that" 
 in at least 4 of 5 tries.
 
 <!-- The five questions are the ones in `OUT_OF_SCOPE` at the bottom of
@@ -68,11 +72,11 @@ in at least 4 of 5 tries.
           sentence cut in half at either end."
        - "No chunk is shorter than 200 characters, since anything below that
           in my corpus turned out to be a heading with no content under it." -->
-
+No chunk is a bare title line: all 10 chunks sampled with python app.py chunks -n 10 contain at least one full sentence of body text under the heading.
 
 
 **Why this target:**
-
+Why: Every doc is Title\n\nBody, so any strategy that splits on paragraph breaks strands the heading as its own useless chunk
 
 
 ---
@@ -86,11 +90,10 @@ in at least 4 of 5 tries.
      handles badly, about source attribution being correct rather than merely
      present — anything, as long as it names a number or an observable
      outcome. -->
-
-
+In 10 sampled chunks, each answers exactly one of: price, hours, noise, or wait times 0 chunks cover more than one
 
 **Why this target:**
-
+The 7 residence-hall posts each bundle heating, laundry cost, and noise into one 563-character post, so a chunk that keeps them together matches three questions weakly instead of one well.
 
 
 ---

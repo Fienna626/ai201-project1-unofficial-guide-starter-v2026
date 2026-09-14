@@ -22,12 +22,39 @@ names a target of "4 of 5", and four of three is not a thing.
 """
 
 QUESTIONS = [
-    # {"question": "...", "expects": "..."},
-    {"question": "", "expects": ""},
-    {"question": "", "expects": ""},
-    {"question": "", "expects": ""},
-    {"question": "", "expects": ""},
-    {"question": "", "expects": ""},
+    # Covered twice (dining_kestrel_commons.txt and its followup), so this is
+    # the one I expect retrieval to find most easily.
+    {
+        "question": "How long do students say the wait at Kestrel Commons is "
+                    "between 12:15 and 1:00?",
+        "expects": "25 minutes",
+    },
+    # Single document (admin_pass_fail_option.txt). One source, one number.
+    {
+        "question": "How late in the semester can I declare a course pass/fail?",
+        "expects": "week eight",
+    },
+    # The hard one: seven residence halls have near-identical laundry posts
+    # that differ only in price and payment method.
+    {
+        "question": "What does a wash and dry cost in Old Brewhouse, and how do "
+                    "the machines take payment?",
+        "expects": "$1.50",
+    },
+    # Two documents describe adjacent deadlines (admin_add_drop_deadline.txt
+    # ends at week six, admin_withdrawal_deadline.txt runs to week ten), so the
+    # failure mode here is retrieving the right topic and the wrong deadline.
+    {
+        "question": "When does the withdrawal deadline fall, and how is "
+                    "withdrawing different from dropping a course?",
+        "expects": "week ten",
+    },
+    # Single document (transit_shuttle.txt) that contains both the weekday and
+    # the weekend frequency — retrieval is easy, picking the right number is not.
+    {
+        "question": "How often does the campus shuttle run on weekends?",
+        "expects": "40 minutes",
+    },
 ]
 
 # Questions from a different world entirely. Your gate should refuse all five.
