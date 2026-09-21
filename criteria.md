@@ -56,6 +56,9 @@ in at least 4 of 5 tries.
 **Why this target:**
 <!-- What did your distances look like when you set the cutoff in Milestone 4?
      Was there a clean gap, or did the two groups overlap? -->
+     I expected the four completely unrelated questions (Mongolia, diesel engines, the 1994 World Cup, Rust loops) to sit far from anything in a corpus about one campus, and I expected the ibuprofen question to be the near miss, because health_center.txt is a document about a health centre. I set the target at 4 of 5 to leave room for that one to slip through.
+
+     When I measured in Milestone 4 the separation was much cleaner than I expected, and my guess about which question was risky was wrong. The five in-corpus questions came back between 0.180 and 0.243; the five out-of-scope ones between 0.825 and 0.934. The closest out-of-scope question was Mongolia at 0.825, not ibuprofen, and the ibuprofen question's nearest match was money_textbooks.txt rather than the health centre at all. With a gap that wide I'm leaving the target at 4 of 5 rather than raising it — one clean measurement isn't proof the gate holds for questions I haven't thought of yet.
 
 ---
 
@@ -90,10 +93,10 @@ Why: Every doc is Title\n\nBody, so any strategy that splits on paragraph breaks
      handles badly, about source attribution being correct rather than merely
      present — anything, as long as it names a number or an observable
      outcome. -->
-In 10 sampled chunks, each answers exactly one of: price, hours, noise, or wait times 0 chunks cover more than one
+For all 5 test questions, every source document named in the answer contains the fact the answer attributes to it. 0 of 5 answers cite a file that doesn't support the claim.
 
 **Why this target:**
-The 7 residence-hall posts each bundle heating, laundry cost, and noise into one 563-character post, so a chunk that keeps them together matches three questions weakly instead of one well.
+Criterion 2 only asks that a source be named, and on this corpus that's clearable while still being wrong. Seven residence halls have laundry posts identical except for the price, and seven dining halls identical except for the wait times, so an answer saying "$1.50, coin only" while citing housing_innisfree_hall_laundry.txt passes criterion 2 and is still misinformation.
 
 
 ---

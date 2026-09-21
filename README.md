@@ -1,6 +1,6 @@
 # The Unofficial Guide
 
-<!-- Replace this line with your name and which corpus you picked. -->
+<!-- Fienna Angeline - Campus life -->
 
 > **This file is your submission.** Fill it in as you go — most sections get
 > written during the milestone that produces them, not at the end.
@@ -28,7 +28,7 @@
 
      Milestone 5. -->
 
-     The corpus is campus_life. basically has 88 short student writte posts about a fictional campus regarding residence halls, courses, etc. The system answers questions from them with sources from official documentation otherwise it does not respond. 
+     The corpus is campus_life. basically has 88 short student writte posts about a fictional campus regarding residence halls, courses, etc. The system answers questions from them with sources from unofficial student-lived documentation otherwise it does not respond. 
 
 ## Chunking Strategy
 
@@ -44,6 +44,7 @@
      more than pretending you got it right first time.
 
      Milestone 3. -->
+     your docs are 178–549 chars, each a title line plus 1–4 paragraphs; the starter's 800-char window produced 88 chunks from 88 documents so it never split anything; dropping it to 500 made it worse (fragments as short as 16 chars); so you went paragraph-based instead, with a 150-char floor that merges short paragraphs forward. Result: 88 → 103 chunks, shortest 174
 
 ## Sample Chunks
 
@@ -132,9 +133,12 @@ Laundry costs $1.75 wash, $1.75 dry, app-based. On noise: moderate; the building
 
      Milestone 4. -->
 
-| Question | In corpus? | Best distance |
-|---|---|---|
-|  |  |  |
+0.55, set in config.py. I measured the best distance for each of my five test questions and each of the five OUT_OF_SCOPE questions:
+In corpus (5) - 0.180, 0.198, 0.206, 0.240, 0.243
+Out of scope (5) - 0.825, 0.844, 0.877, 0.886, 0.934
+The two groups don't overlap. There's a gap from 0.243 to 0.825 with nothing in it. 0.55 is roughly the midpoint. The starter's default of 0.6 also falls inside the gap, so it would have worked, but 0.55 is the number my own corpus gave me rather than the one I was handed.
+
+The closest call in the in-corpus group was the Old Brewhouse laundry question: its top two chunks came back at 0.240 and 0.246, nearly tied, which is the seven near-identical laundry posts competing with each other. It still returned the right one.
 
 ## How I Used AI
 
@@ -147,9 +151,9 @@ Laundry costs $1.75 wash, $1.75 dry, app-based. On noise: moderate; the building
 
      Milestone 5. -->
 
-**1.**
+**1.** I used Ai to summarize the milestones. alot of it was wordy so I copy pasted it and ask for clarifying questions where needed. Like a personal professor answering questions for me based on the content. 
 
-**2.**
+**2.** I also used Ai to help me clarify certain parts and to check my work where they gave me suggestions and i altered it based on what I thought was correct from the instructions.
 
 <!-- ── Stretch features ─────────────────────────────────────────────────────
      Doing one? Say so here BEFORE you start. A feature this README never
