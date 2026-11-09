@@ -192,6 +192,24 @@ material", which is what the fix follows from. I also had it argue against my
 own conclusion that hybrid search would help; the counter-argument was that RRF
 only sees ranks, and checking that turned out to be correct.
 
+**4. Capstone: the whole build, and where I pushed back.** I used Claude
+heavily this unit — it wrote `failures.py`, `observability.py`, the two tools in
+`tools/`, and the test harness, and it drafted my five acceptance criteria after
+I asked it to rather than writing them myself. Two things I did decide. When it
+asked whether a failed model call should reuse the gate's refusal or get its own
+message, I picked its own message, and that decision is the spine of the whole
+extension — it is why `outcome` has three values instead of two and why a failure
+is a 503 rather than a 200. And when it offered to write the criteria, it told me
+first that it already knew the system's latency and token numbers, so criteria it
+wrote could not honestly be "before the results"; I told it to write them anyway,
+and that is a real cost to this submission that the commit history does not show.
+
+The most useful thing it did was not code. After every criterion passed in the
+retrieval project it kept insisting that was a finding about my criteria rather
+than my system, and the same thing happened here with criterion 3 — it passed at
+32 ms and Claude called it a measurement of my disk rather than a success. Both
+times my instinct was to move on.
+
 <!-- ── Stretch features ─────────────────────────────────────────────────────
      Doing one? Say so here BEFORE you start. A feature this README never
      claims earns nothing.
@@ -727,6 +745,53 @@ locally, so it appears in the latency and nowhere in the token count. The
 ~80 MB model download happens once. Disk is about 90 MB of model plus 5 MB of
 index. There is no hosting cost because this is Path B.
 
+### A hundred people a day
+
+The arithmetic, from the measured number and nothing else:
+
+```
+                 448 tokens  per request          (measured, 10 uncached runs)
+    100 people x   3 questions each               (assumed, see below)
+  =              300 requests per day
+  x              448 tokens
+  =          134,400 tokens per day
+  x               30 days
+  =        4,032,000 tokens per month
+```
+
+Split the way my measurements split it — 398 in to 49.6 out, so 89% input —
+that is about **3.6M input and 450K output tokens a month**.
+
+I am not going to quote a money figure, and the reason is the same reason this
+section exists. I measured tokens; I did not measure a price. Converting one to
+the other means `tokens ÷ 1,000,000 × rate`, and the rate is a number I would
+be copying off a pricing page rather than observing — which is precisely what
+this milestone says is not a measurement. The multiplication is above and takes
+one lookup to finish.
+
+**Three things the arithmetic exposes that the per-request number hides.**
+
+The three-questions-per-person figure is an assumption, not a measurement, and
+it is the biggest lever in the sum. If it is five, the monthly total is 6.7M.
+I have no data on how many questions a real student asks, and the honest answer
+is that this number is one measurement multiplied by one guess.
+
+Rate limiting, not token cost, is what would break first. 300 requests spread
+across a day is 0.6 per minute against a 30-per-minute guard, which is fine
+until it is not: this is a campus guide, so the requests would not be spread
+across a day. Fifty people asking where to eat in the ten minutes before lunch
+is 5 per minute sustained with bursts well above it, and `generate.py` would
+start backing off and retrying while the slowest users waited.
+
+The cache changes the number and I cannot say by how much. Across my whole log,
+267 of 318 answered requests — 84% — were served without spending a token. That
+number is worthless as a prediction, because it is me asking the same five
+questions hundreds of times. But a hundred students at one campus *do* ask
+overlapping questions, which is the entire premise of this corpus, so the real
+figure sits somewhere between 134,400 tokens a day and a small fraction of it,
+and the only way to find out is to run it for a week and read the log. The
+instrumentation to answer that already exists; the users do not.
+
 
 ---
 
@@ -892,7 +957,7 @@ Criterion 5 found its bug in Milestone 3 rather than here, which is why it
 passed here. The three clones in this run were a check that fixing the venv and
 `.env` steps had not exposed something behind them. It had not.
 
-## The Improvement
+## The Capstone Improvement
 
 **What I changed:** `failures.py::classify`, from one pass to three.
 
@@ -967,3 +1032,58 @@ it would not be.
 Criterion 3's number is the same 32 ms in both tables, which is the clearest
 sign that it was measuring the cache rather than the system in both. The
 revised version above is what I would run next.
+
+
+## Capstone — What's Still Broken
+
+**No criterion is still missed.** Criterion 1 went from 4/6 to 6/6 and the
+other four were met before the fix and after it. What follows is what is left
+anyway, because "all five passed" and "the system is sound" are different
+claims and only the first one is true.
+
+**Three failure reasons have never been triggered.** `quota`, `rate_limit` and
+`service` are in the closed set in `failures.py`, and criterion 1 says "every
+failure I **can** inject" — six — rather than every failure that exists — nine.
+That wording was deliberate when I wrote it and it is still the honest reading
+of the result. `rate_limit` has a retry loop wrapped around it that none of my
+tests exercised, so the least-tested path in the system is also the one with
+the most logic in it. What I would do: hold a fake client that returns 429 for
+the first two calls and succeeds on the third, which tests the backoff rather
+than just the classification. I stopped because the fix I picked was for the
+criterion I missed, and building a second harness would have been a second
+change.
+
+**Criterion 3 measured the response cache, not the system.** Diagnosed above
+and revised underneath the original. The revision — same 2,000 ms target,
+measured with caching off — has not been run. It takes one environment variable
+and I did not want a re-measured "after" number for a criterion whose original
+number is what the before-and-after table is comparing.
+
+**`classify` is still guessing from text in its third pass.** Passes 1 and 2
+are rules; pass 3 is the old substring table, kept because `no_key` and
+`empty_response` are raised by this codebase in wording I control. For anything
+the SDK raises, a third unfamiliar phrasing would still land in `unknown`. The
+right answer is for the SDK to expose a status on the exception object, which
+is not mine to fix.
+
+**The log grows without limit.** `logs/guide.jsonl` is append-only with no
+rotation. At 300 requests a day it is a few megabytes a year and not a problem;
+it is a problem the first time someone leaves it running somewhere it matters,
+and it is the kind of thing that is cheap now and annoying later.
+
+**Known and deliberately untouched from the previous unit.** Chunks still mix
+topics — `housing_old_brewhouse.txt#1` holds heating, laundry cost and noise
+together. Retrieval precision is 47%. Hybrid search is written, measured at
+53%, and switched off. All three were out of scope on purpose and all three are
+still true.
+
+## Capstone — What I'd Do Next
+
+If this were real and I had another unit, I would make `top_k` vary with the
+distance gap instead of being fixed at 3 — take chunks until the distance
+jumps, so the pass/fail question gets its one relevant chunk and Old Brewhouse
+gets its four. I would do that one first because it is the only item on the
+list that touches the thing the system is actually for: every other candidate
+improves how I observe the system failing, and this one makes it answer better,
+on the measurement — 47% precision — that my own criteria never thought to
+look at.
