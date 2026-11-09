@@ -52,20 +52,35 @@ def load_scorer():
 
 
 def run_once(question: str, top_k, threshold, corpus, variant):
-    """One question, one run. Returns the answer and what retrieval gave us."""
+    """One question, one run.
+
+    Returns (answer, results, decision, failure_reason). The last is None when
+    the call succeeded, and a reason code from `failures.classify` when the
+    generation stage fell over.
+    """
     from store import search
     import gate
     from generate import answer_from_chunks
+
+    from failures import GenerationFailure, UNAVAILABLE
 
     results = search(question, top_k=top_k, corpus=corpus, variant=variant)
     decision = gate.check(results, threshold=threshold)
 
     if not decision.passed:
-        return gate.REFUSAL, results, decision
+        return gate.REFUSAL, results, decision, None
 
     # cache=False on purpose. Three runs have to be three real answers.
-    answer = answer_from_chunks(question, results, cache=False)
-    return answer, results, decision
+    try:
+        answer = answer_from_chunks(question, results, cache=False)
+    except GenerationFailure as failure:
+        # An eval that dies on request 7 of 15 throws away the six results it
+        # already had, and those cost real quota. Record the failure as the
+        # outcome of this run and carry on — a run log that says "run 2 failed
+        # with reason auth" is evidence; a half-written file is not.
+        return UNAVAILABLE, results, decision, failure.reason
+
+    return answer, results, decision, None
 
 
 def main():
@@ -109,13 +124,21 @@ def main():
 
         run_results = []
         for run in range(1, args.runs + 1):
-            answer, results, decision = run_once(
+            answer, results, decision, failure_reason = run_once(
                 question, top_k, threshold, corpus, args.variant
             )
-            passed = judge(question, expects, answer, results) if judge else None
+            if failure_reason is not None:
+                # A run that never reached the model is not a wrong answer, and
+                # scoring it as one would quietly turn an outage into a bad
+                # result for the system.
+                passed = None
+            else:
+                passed = judge(question, expects, answer, results) if judge else None
             run_results.append(passed)
 
             mark = {True: "pass", False: "fail", None: "—"}[passed]
+            if failure_reason is not None:
+                mark = f"FAILED ({failure_reason})"
             print(f"  run {run}: {mark}  (best distance {decision.best_distance:.3f})")
 
             transcript.append(
@@ -126,6 +149,7 @@ def main():
                     "sources": sorted({r.source for r in results}),
                     "best_distance": decision.best_distance,
                     "gate_passed": decision.passed,
+                    "failure_reason": failure_reason,
                 }
             )
 

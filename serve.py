@@ -20,7 +20,9 @@ Why this exists: `app.py` runs once and exits, which is fine on your laptop
 and impossible to deploy. A hosted service has to stay up and wait for
 requests. This is the smallest thing that does that.
 
-⚠️ There is deliberately no logging, no timing and no metrics in this file.
+Logging and timing live in `observability.py` and are wired in below.
+The starter shipped this file without them on purpose; adding them is
+the exercise, and this is that work.
 Week 9 has you build the structured log yourself — the request line, the
 timing field everyone skips, the whole instrument-before-you-deploy exercise.
 Shipping a logger here would hand you the answer to that. Add yours in week 9;
@@ -88,24 +90,52 @@ def ask():
         )
 
     try:
-        outcome = ask_pipeline(question, corpus=config.CORPUS)
+        # source="http" so one log can hold both the CLI and the service and
+        # still be split by where a request came from. ask_pipeline logs the
+        # request itself, including a generation failure, so nothing is
+        # recorded twice here.
+        outcome = ask_pipeline(question, corpus=config.CORPUS, source="http")
     except Exception as exc:  # noqa: BLE001 — a reader gets this, not a traceback
+        # Anything still reaching here is a fault outside the generation
+        # stage — a missing index, most likely. It is logged, because an
+        # error nobody recorded is an error nobody can count.
+        import observability as obs
+        from failures import classify
+
+        obs.log_request(
+            source="http",
+            question=question,
+            outcome="failed",
+            reason=classify(exc),
+        )
         return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 500
 
-    return jsonify(
-        {
-            "question": question,
-            "answer": outcome["answer"],
-            "refused": outcome["refused"],
-            "sources": outcome["sources"],
-            "best_distance": round(outcome["best_distance"], 4),
-            "threshold": outcome["threshold"],
-            "corpus": config.CORPUS,
-        }
-    )
+    body = {
+        "question": question,
+        "answer": outcome["answer"],
+        "refused": outcome["refused"],
+        "failed": outcome["failed"],
+        "sources": outcome["sources"],
+        "best_distance": round(outcome["best_distance"], 4),
+        "threshold": outcome["threshold"],
+        "corpus": config.CORPUS,
+    }
+
+    if outcome["failed"]:
+        # 503, not 200 and not 500. The request was fine and the corpus has
+        # the material; a dependency is down. A caller retrying on 503 is
+        # doing the right thing, which is not true of either of the others.
+        body["reason"] = outcome["reason"]
+        return jsonify(body), 503
+
+    return jsonify(body)
 
 
 def main():
+    import observability as obs
+
+    obs.log_startup("http")
+
     # Hosts tell you which port to listen on through PORT, and they expect you
     # on 0.0.0.0. Binding 127.0.0.1 instead works perfectly on your laptop and
     # then answers nothing at all once deployed, because the host's router

@@ -255,3 +255,78 @@ weeks.
 
 `results/` is deliberately **not** in `.gitignore`. Your run logs are evidence
 that the test actually happened, and they're part of what gets graded.
+
+
+---
+
+## Running it as a service, with logs — **capstone, Path B**
+
+This system embeds locally with `all-MiniLM-L6-v2`, so it does not fit the
+512 MB free hosting tier. It runs on a machine, started by one command, and
+leaves a record behind.
+
+**The one command**, from a clean checkout with the virtual environment active:
+
+```powershell
+python app.py index ; python serve.py
+```
+
+```bash
+python app.py index && python serve.py
+```
+
+`index` is part of it on purpose. The vector store lives on disk under
+`chroma_db/`, which is not committed, so a clean checkout has no index and
+every `/ask` would answer "no index" until one is built. Running both is the
+difference between a command that works on my machine and one that works on
+someone else's.
+
+It listens on port 5000, or `PORT` if that is set.
+
+**What the environment needs**
+
+| | |
+|---|---|
+| Python | 3.11 |
+| Dependencies | `pip install -r requirements.txt` — pinned in that file |
+| Model files | `all-MiniLM-L6-v2`, ~80 MB, downloaded on first index from `chroma-onnx-models.s3.amazonaws.com` |
+| Disk | ~90 MB for the model plus ~5 MB for the index of `campus_life` |
+| Secrets | `GEMINI_API_KEY` in `.env`. Retrieval works without it; only answering needs it |
+
+**Checking it is up**
+
+```bash
+curl localhost:5000/health
+curl -X POST localhost:5000/ask -H "Content-Type: application/json" \
+  -d '{"question":"How often does the campus shuttle run on weekends?"}'
+```
+
+`/health` reports whether an index exists, which is the failure a fresh
+checkout actually hits.
+
+**What comes back, and the status code**
+
+| Outcome | Status | Body says | Means |
+|---|---|---|---|
+| Answered | 200 | `"refused": false, "failed": false` | Normal |
+| Refused | 200 | `"refused": true` | The gate stopped it. The system working |
+| Generation failed | 503 | `"failed": true`, plus `"reason"` | Retrieval was fine; the model call fell over. Retry is reasonable |
+| No index, bad request | 400 / 500 | `"error"` | A fault before the generation stage |
+
+A refusal is a 200 because it is an answer. A failure is a 503 because it is
+not, and a caller that retries on 503 is doing the right thing — which is not
+true of 200 or 500.
+
+**The log**
+
+Every request appends one JSON object to `logs/guide.jsonl`, from both the CLI
+and the service. `AI201_LOG` moves the file if you want it elsewhere.
+
+```bash
+python tools/logstats.py
+```
+
+reads that file and reports outcome counts, failure reasons by kind, median and
+p95 latency, how much of a request is the model call, and token cost per
+answered request — all from records that already exist, without re-running
+anything.
