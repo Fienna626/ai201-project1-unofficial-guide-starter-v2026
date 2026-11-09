@@ -476,3 +476,80 @@ system passed and none that told me what to fix. The number that moved, 32% to
 **I would keep criterion 3 exactly as it is**, including the prediction I got
 wrong about the ibuprofen question. Writing down which failure I expected and
 then being wrong about it is the most informative thing in `criteria.md`.
+
+
+---
+
+# Capstone
+
+## The Shape
+
+**System:** The Unofficial Guide - the same `campus_life` retrieval system in
+this repo, not a new one.
+
+**Shape B, Path B.** I am hardening the system against failure, and running it
+locally with a committed record rather than hosting it.
+
+Right now this system only behaves well when everything goes right. The parts
+that can fail have been handled unevenly: a rate limit backs off and retries, a
+runaway session is stopped by `QuotaGuard`, and a missing index prints a clear
+instruction. But every *other* way the model call can fail falls straight
+through to a traceback. I know this from experience rather than from reading the
+code - during week 1 my `.env` still held the placeholder key, and
+`python app.py ask` answered with a raw `ClientError` stack trace. Retrieval and
+the gate had both worked perfectly and said so, and the system still looked
+broken rather than temporarily unavailable.
+
+So the extension is this: **every failure in the generation stage returns a
+readable message instead of a traceback, and every request writes one structured
+log line recording what happened.**
+
+Concretely, that means a timeout on the model call so it cannot hang, an
+exception boundary that catches anything the retry logic does not already
+handle, and a JSON-lines log carrying the question, the best retrieval distance,
+the gate decision, the latency, the token count, and the outcome.
+
+One decision inside that is worth naming, because it is a promise to whoever is
+reading the answer. When the model call fails, the system will **not** reuse the
+existing refusal, "I don't have enough information about that." That sentence is
+false in this situation: for a question like the Old Brewhouse laundry one, the
+documents do contain the answer and retrieval found it - the system simply could
+not reach the model. Blaming the corpus for an outage is the kind of
+confidently-wrong output the relevance gate exists to prevent in the first
+place. A failed call gets its own distinguishable message, and the log gets its
+own distinguishable outcome, so the two are never counted as the same event.
+
+Instrumentation is not part of my one-thing budget. The unit requires a run path
+and a log whichever shape is picked, so it comes alongside the hardening rather
+than instead of something else.
+
+## Out of Scope
+
+Three things I considered and am deliberately not doing.
+
+**Not turning hybrid search back on.** The code is already written and sitting
+in `store.py::_rerank` behind `HYBRID = False`, and I measured it at 53%
+retrieval precision against 47% for what ships. Turning on a flag is a one-line
+change and genuinely tempting. It is still out, because it would change what the
+system retrieves at the same time as I am changing how it fails, and I would not
+be able to tell which one moved the numbers. This is the same reason I did not
+ship it last unit.
+
+**Not touching chunking.** I know `chunker.py::split_documents` still produces
+chunks that mix topics - `housing_old_brewhouse.txt#1` carries heating, laundry
+cost and noise together - and I wrote in the last unit that I would tighten
+criterion 4 to catch exactly that. Fixing it means re-indexing, which invalidates
+every distance I have measured, including the 0.55 cutoff. That is a chunking
+unit of work, not a failure-handling one.
+
+**Not hosting it.** Path B, and for a specific reason rather than as a hedge:
+this system loads `all-MiniLM-L6-v2` locally, about 80 MB of model plus its
+runtime, and the free hosting tier offers 512 MB of memory. Embedding on my own
+machine is a design choice in this project - it is why the system costs no API
+quota to retrieve - and it is not compatible with that tier. The run record and
+the documented single command do the same job here that a URL would.
+
+**Scope check.** Two pieces of work: the failure handling, and the logging. The
+second is required by the unit regardless of shape, so there is one thing I
+chose. Anything that re-indexes, re-ranks, or changes what the system retrieves
+is out.
