@@ -1,0 +1,64 @@
+{
+  "trial": 5,
+  "c1": {
+    "passed": 6,
+    "total": 6,
+    "detail": [
+      {
+        "mode": "no_key",
+        "reason": "no_key",
+        "failed": true,
+        "traceback": false,
+        "ok": true
+      },
+      {
+        "mode": "auth",
+        "reason": "auth",
+        "failed": true,
+        "traceback": false,
+        "ok": true
+      },
+      {
+        "mode": "timeout",
+        "reason": "timeout",
+        "failed": true,
+        "traceback": false,
+        "ok": true
+      },
+      {
+        "mode": "network",
+        "reason": "network",
+        "failed": true,
+        "traceback": false,
+        "ok": true
+      },
+      {
+        "mode": "bad_request",
+        "reason": "bad_request",
+        "failed": true,
+        "traceback": false,
+        "ok": true
+      },
+      {
+        "mode": "empty_response",
+        "reason": "empty_response",
+        "failed": true,
+        "traceback": false,
+        "ok": true
+      }
+    ]
+  },
+  "c2": {
+    "records": 30,
+    "expected": 30,
+    "unparseable": 0
+  },
+  "c3": {
+    "p95_ms": 32.0,
+    "n": 30
+  },
+  "c4": {
+    "tokens": 2275,
+    "inside": true
+  }
+}

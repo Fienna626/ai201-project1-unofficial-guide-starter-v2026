@@ -726,3 +726,244 @@ cost anything are the ones that produced something.
 locally, so it appears in the latency and nowhere in the token count. The
 ~80 MB model download happens once. Disk is about 90 MB of model plus 5 MB of
 index. There is no hosting cost because this is Path B.
+
+
+---
+
+## Capstone Run Log — Before
+
+Produced by `tools/capstone_test.py::main`, three trials, nothing changed
+between them. Criterion 5 is run by hand — it needs a clone into an empty
+folder and a fresh virtual environment, and automating that inside the repo it
+is meant to be independent of would be measuring the wrong thing.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. Every injectable failure named, no traceback | 6 of 6 | 4/6 | 4/6 | 4/6 | **MISSED** |
+| 2. No request missing from the log under load | 30 of 30, 0 corrupt | 30/30, 0 | 30/30, 0 | 30/30, 0 | MET |
+| 3. Warm server p95 under 2,000 ms | p95 < 2000 ms | 578 ms | 62 ms | 32 ms | MET |
+| 4. Run cost within 10% of 2,238 tokens | 2,014–2,462 | 2,203 | 2,261 | 2,218 | MET |
+| 5. Clean clone reaches a working /ask | 3 of 3 | 200 | 200 | 200 | MET |
+
+**Criterion 1** — real output from `tools/capstone_test.py::criterion_1`,
+trial 1. Each mode is injected in a child process so the environment cannot
+leak between them:
+
+```
+C1 failure modes named : 4/6
+     ok  no_key          reason=no_key         traceback=False
+     ok  auth            reason=auth           traceback=False
+     ok  timeout         reason=timeout        traceback=False
+     MISS network        reason=unknown        traceback=False
+     MISS bad_request    reason=unknown        traceback=False
+     ok  empty_response  reason=empty_response traceback=False
+```
+
+The two underlying errors, from `failures.py::classify` on each:
+
+```
+network      GenerationFailure: unknown: [Errno 11001] getaddrinfo failed
+bad_request  GenerationFailure: unknown: 404 NOT_FOUND. {'error': {'code': 404,
+             'message': 'models/definitely-not-a-model-xyz is not found for API
+             version v1beta, or is not supported for generateContent...
+```
+
+**Criterion 2** — `tools/capstone_test.py::criterion_2` counts
+`event: "request"` records written to `logs/guide.jsonl` by
+`observability.py::log_event` while 30 requests are in flight on separate
+threads:
+
+```
+C2 log records         : 30/30, 0 unparseable
+```
+
+**Criterion 3** — `tools/capstone_test.py::criterion_3`, reading `latency_ms`
+straight out of the log for answered requests only:
+
+```
+C3 warm p95            : 578 ms over 30 answered
+```
+
+**Criterion 4** — token totals from `generate.py::token_counts`, which reads
+`usage_metadata` off each response:
+
+```
+C4 run cost            : 2203 tokens, inside 2014-2462
+```
+
+**Criterion 5** — one of three clean clones, following the capstone section of
+`RUNNING.md` into an empty folder with a fresh virtual environment:
+
+```
+===== CLONE 1 =====
+  index: ok
+  POST /ask -> 200
+{"answer":"The campus shuttle runs every 40 minutes on weekends
+(transit_shuttle.txt).","best_distance":0.1799,"corpus":"campus_life",
+"failed":false,...
+```
+
+## Capstone Verdicts
+
+| # | Criterion | Verdict | How I decided |
+|---|---|---|---|
+| 1 | Every injectable failure named, no traceback | **MISSED** | 4 of 6 on all three trials against a target of 6 of 6. Not close, and identical every time, because classification is deterministic. |
+| 2 | No request missing from the log under load | MET | 30 records for 30 requests, zero unparseable lines, three times. |
+| 3 | Warm server p95 under 2,000 ms | MET | 578, 62 and 32 ms. Met by a wide margin, and see the diagnosis — the margin is the problem. |
+| 4 | Run cost within 10% of 2,238 | MET | 2,203 / 2,261 / 2,218, all inside 2,014–2,462. The spread across trials was 58 tokens, under 3%. |
+| 5 | Clean clone reaches a working /ask | MET | Three separate clones into empty folders, each a 200 with a correct answer. |
+
+No criterion was revised before testing. One is revised after, below, and it is
+the one I met rather than the one I missed.
+
+## Capstone Diagnoses
+
+### Criterion 1 — the miss
+
+**Stage:** classification, `failures.py::classify`. Not generation — the model
+call failed exactly as it was supposed to in all six cases, the reader saw the
+unavailable message every time, and no traceback escaped in any of the six.
+What failed was the system's ability to say *what* had gone wrong.
+
+**Mechanism:** `classify` worked by matching substrings against `_SIGNATURES`,
+a hand-written table of error texts. Every entry in that table was a string I
+had personally seen while building. So the function could only ever name a
+failure that someone had already met, and the two it missed were the two
+whose wording I had never encountered:
+
+- **network** returns `[Errno 11001] getaddrinfo failed` on Windows. My table
+  had `"name or service not known"` — which is the *Linux* message for exactly
+  the same DNS failure. I wrote a signature for a fault I understood correctly
+  and a platform I was not running on.
+- **bad_request** returns **404** for a model name that does not exist. My
+  table knew `400` and `invalid_argument`. 404 appeared in no entry at all.
+
+**The pattern:** these are not two bugs, they are one. Both are the same
+structural weakness — substring matching over a list of previously-observed
+strings — and the symptoms differ only in which string I happened not to have
+seen. Saying "add getaddrinfo, add 404" would have fixed these two and left the
+mechanism intact for the next unfamiliar platform or status code. That is the
+difference between a diagnosis and a description, and it is what decided the
+fix.
+
+### Criterion 3 — met, and measuring the wrong thing
+
+Criterion 3 passed at 578 ms, then 62 ms, then 32 ms. That downward slide is
+not the server warming up; it is the **response cache filling**. My criterion
+says "end-to-end latency recorded in `latency_ms` for answered requests" and
+says nothing about caching, and `serve.py` runs with caching on, so by trial 3
+almost every request was being served from `.cache` without the model being
+called at all. A 32 ms p95 is a measurement of my disk.
+
+This is the same mistake as criterion 4 in the retrieval project — a criterion
+that cannot fail — arrived at from the other direction. There I wrote a target
+guaranteed by construction. Here I wrote a reasonable target and then measured
+it in a way that guaranteed passing. The number is real; it just is not about
+what the sentence claims to be about.
+
+I am not revising the target, because I met it and lowering or moving a target
+you met is as dishonest as lowering one you missed. I am revising what it
+measures:
+
+> **Revised after testing:** Warm-server p95 for answered requests that
+> actually reached the model — measured with the response cache off — is under
+> 2,000 ms over 30 requests.
+>
+> **Why revised:** the original could be satisfied entirely by cache hits, and
+> was: p95 fell from 578 ms to 32 ms across three trials as the cache filled,
+> which measures how fast a file reads rather than how fast the system answers.
+> The criterion could not distinguish a fast system from a well-cached one, so
+> it could not be measured the same way twice. This is a measurability fix, not
+> a change of target — the number stays at 2,000 ms.
+
+### Criteria 2, 4 and 5 — no misses, and how much that is worth
+
+Criterion 2 was the one I expected to be hardest, and the lock in
+`observability.py::log_event` held: 90 concurrent requests across three trials,
+90 records, zero corrupted lines. I will take that as evidence, since I wrote
+the target before knowing it.
+
+Criterion 4's spread was 58 tokens across three trials, well inside the 10%
+band I allowed. I set 10% expecting the fourfold per-question output variance
+to matter more than it did; averaged over five questions it washes out. If I
+were writing it again I would set 5%.
+
+Criterion 5 found its bug in Milestone 3 rather than here, which is why it
+passed here. The three clones in this run were a check that fixing the venv and
+`.env` steps had not exposed something behind them. It had not.
+
+## The Improvement
+
+**What I changed:** `failures.py::classify`, from one pass to three.
+
+```
+1. the exception TYPE     — an OSError is an OSError on every platform
+2. an HTTP status code    — lifted out of the message numerically
+3. the signature table    — unchanged, now only a fallback
+```
+
+**Why I picked it:** the diagnosis says `classify` could only name failures
+whose exact wording someone had already seen. Passes 1 and 2 do not have that
+property. `gaierror` is `gaierror` on Windows and Linux alike, and `404` is
+`404` whatever English follows it, so both of the modes that missed are named
+by a rule rather than by a remembered string. Adding `"getaddrinfo"` and
+`"404"` to the table would have turned 4/6 into 6/6 just as fast and left the
+seventh unfamiliar error to come back as `unknown`.
+
+I also kept the table rather than deleting it. `no_key` and `empty_response`
+are raised by this codebase with wording I control, and a substring is the
+right tool for a string you wrote yourself.
+
+### Capstone Run Log — After
+
+Same five criteria, three trials, same harness.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. Every injectable failure named, no traceback | 6 of 6 | 6/6 | 6/6 | 6/6 | **MET** |
+| 2. No request missing from the log under load | 30 of 30, 0 corrupt | 30/30, 0 | 30/30, 0 | 30/30, 0 | MET |
+| 3. Warm server p95 under 2,000 ms | p95 < 2000 ms | 32 ms | 32 ms | 32 ms | MET |
+| 4. Run cost within 10% of 2,238 tokens | 2,014–2,462 | 2,288 | 2,275 | 2,240 | MET |
+| 5. Clean clone reaches a working /ask | 3 of 3 | 200 | 200 | 200 | MET |
+
+**Criterion 1 after**, same harness and same six injected modes:
+
+```
+C1 failure modes named : 6/6
+     ok  no_key          reason=no_key         traceback=False
+     ok  auth            reason=auth           traceback=False
+     ok  timeout         reason=timeout        traceback=False
+     ok  network         reason=network        traceback=False
+     ok  bad_request     reason=bad_request    traceback=False
+     ok  empty_response  reason=empty_response traceback=False
+```
+
+**Did it help?**
+
+Yes, on the thing it was aimed at, and the rest of the table is unchanged
+because nothing else was touched.
+
+Criterion 1 went from 4/6 to 6/6 and stayed there across three trials. The two
+modes that were returning `unknown` now return `network` and `bad_request`, and
+a log line that says `network` tells me to check the connection while one that
+says `unknown` tells me only that an answer did not arrive.
+
+**What it did not do, and the trade.** 6/6 is six modes I can inject, not six
+modes that exist — `quota`, `rate_limit` and `service` are in the reason set
+and I have never triggered any of them deliberately. Criterion 1's target was
+honest about this when I wrote it and I am keeping that honesty here: the
+criterion says "every failure I **can** inject", and passing it means the
+classifier handles the six I know how to produce. The structural change makes
+me more confident about the other three than the old table did, since a 503 is
+now matched as a number rather than as a remembered phrase, but confidence is
+not a measurement and I have not measured it.
+
+The trade is a real one. `classify` is now about three times as long and has
+three code paths where it had one, for a function whose entire job is to pick a
+string. On a system where the log is the only way to find out what happened
+after the fact, I think a correct label is worth that. On a system with no log,
+it would not be.
+
+Criterion 3's number is the same 32 ms in both tables, which is the clearest
+sign that it was measuring the cache rather than the system in both. The
+revised version above is what I would run next.
