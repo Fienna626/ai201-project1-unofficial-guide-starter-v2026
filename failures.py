@@ -70,17 +70,102 @@ _SIGNATURES: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 
+def _status_code(message: str) -> int | None:
+    """Pull an HTTP status out of an error message, if there is one.
+
+    The SDK puts the code in the text rather than on the exception, so this
+    looks for a bare three-digit number in the 400-599 range. Matching on the
+    number rather than on the words around it is the point: "404 NOT_FOUND"
+    and "404 Not Found" and "code: 404" are the same failure and used to be
+    three different strings to remember.
+    """
+    import re
+
+    for match in re.finditer(r"\b([45]\d{2})\b", message):
+        code = int(match.group(1))
+        if 400 <= code <= 599:
+            return code
+    return None
+
+
+_STATUS_REASONS = {
+    400: "bad_request",
+    401: "auth",
+    403: "auth",
+    404: "bad_request",   # a model name that does not exist is a bad request
+    408: "timeout",
+    429: "rate_limit",
+}
+
+# Exception types that mean the request never reached the service. Checked by
+# type rather than by message, because the message is written by whichever
+# layer of the network stack failed and differs per platform.
+_NETWORK_TYPES = (
+    "gaierror", "timeouterror", "connecterror", "connecttimeout",
+    "readtimeout", "connectionerror", "remoteprotocolerror",
+    "sslerror", "socketerror", "oserror",
+)
+
+
 def classify(exc: BaseException) -> str:
     """
     Name the reason a model call failed.
 
-    Matching on message text is not elegant, and it is what the SDK gives us:
-    the same `ClientError` type carries an expired key, a malformed request and
-    a server fault, and only the message tells them apart. The reason codes are
-    a closed set so the log stays countable — an unrecognised error becomes
-    `unknown` rather than inventing a new category per incident.
+    Three passes, cheapest and most reliable first:
+
+      1. The exception type, for failures that never reached the service.
+      2. An HTTP status code lifted out of the message.
+      3. The signature table, for everything the first two cannot see.
+
+    It used to be pass 3 alone, and that is exactly how it failed its own
+    acceptance criterion. `_SIGNATURES` is a list of strings I had personally
+    seen, so it could only ever name a failure someone had already met. Two
+    modes landed in `unknown`: a DNS failure, which says "getaddrinfo failed"
+    on Windows where my entry said "name or service not known" — the Linux
+    phrasing of the identical fault — and an unknown model name, which returns
+    404 where my entry only knew about 400. A platform and a status code I had
+    not happened to encounter.
+
+    Passes 1 and 2 do not have that shape. An `OSError` is an `OSError` on
+    every platform, and 404 is 404 whatever words follow it.
     """
+    type_name = type(exc).__name__.lower()
+    if any(needle in type_name for needle in _NETWORK_TYPES):
+        # A timeout is a more specific thing to say than "network", and some
+        # timeout classes subclass OSError, so it is checked first.
+        if "timeout" in type_name:
+            return "timeout"
+        return "network"
+
     message = f"{type(exc).__name__} {exc}".lower()
+
+    # A wrapped network error: the type is the SDK's, the cause is the socket.
+    cause = exc.__cause__ or exc.__context__
+    if cause is not None:
+        cause_name = type(cause).__name__.lower()
+        if any(needle in cause_name for needle in _NETWORK_TYPES):
+            return "timeout" if "timeout" in cause_name else "network"
+
+    # errno 11001 (Windows) and 11004 are DNS resolution failures and carry no
+    # consistent wording at all.
+    if "getaddrinfo" in message or "errno 11001" in message or "errno 11004" in message:
+        return "network"
+
+    status = _status_code(message)
+    if status is not None:
+        if status in _STATUS_REASONS:
+            # 401/403 reach here as "auth", but an expired key also says so in
+            # words, and the words are checked below for the cases where the
+            # service returns 400 with an API_KEY_INVALID body.
+            if _STATUS_REASONS[status] == "bad_request" and any(
+                needle in message
+                for needle in ("api key", "api_key", "unauthenticated")
+            ):
+                return "auth"
+            return _STATUS_REASONS[status]
+        if 500 <= status <= 599:
+            return "service"
+
     for reason, needles in _SIGNATURES:
         if any(needle in message for needle in needles):
             return reason
