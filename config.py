@@ -33,7 +33,21 @@ MIN_CHUNK_CHARS = 150   # a paragraph shorter than this merges into the next
 
 # ─── Retrieval (Milestone 4) ─────────────────────────────────────────────────
 
-TOP_K = 5               # how many chunks to pull back per question
+TOP_K = 3               # week 2: was 5. Only 11 on-topic chunks exist across
+                        # my five questions, so 5 guaranteed 14 noise chunks.
+
+# ─── Hybrid search (week 2 improvement) ──────────────────────────────────────
+# Semantic search alone can't tell seven near-identical laundry posts apart:
+# they differ only in a building name and a price, and those are exactly the
+# tokens an embedding averages away. BM25 matches the literal word, so the two
+# together rank the right building above its look-alikes.
+#
+# Set HYBRID = False to go back to meaning-only and re-measure.
+
+HYBRID = False          # measured in week 2 and it changed one chunk in 25;
+                        # see README. Set True to reproduce that measurement.
+BM25_POOL = 30          # how many semantic candidates BM25 gets to re-rank
+HYBRID_ALPHA = 0.5      # 1.0 = meaning only, 0.0 = keywords only
 
 # The relevance gate. If the best chunk is further away than this, the system
 # refuses to answer instead of handing the model thin material.

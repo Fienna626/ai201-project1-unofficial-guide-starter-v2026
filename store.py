@@ -199,16 +199,19 @@ def search(
             f"No index called '{name}'. Run `python app.py index` first."
         ) from exc
 
+    # With hybrid search on, pull a wider pool of candidates so BM25 has
+    # something to re-rank. With it off, this is the plain top-k it always was.
+    pool = config.BM25_POOL if config.HYBRID else top_k
     raw = collection.query(
         query_embeddings=embed([question]),
-        n_results=min(top_k, collection.count()),
+        n_results=min(max(pool, top_k), collection.count()),
     )
 
-    results: list[Result] = []
+    candidates: list[Result] = []
     for text, meta, distance in zip(
         raw["documents"][0], raw["metadatas"][0], raw["distances"][0]
     ):
-        results.append(
+        candidates.append(
             Result(
                 text=text,
                 source=str(meta.get("source", "unknown")),
@@ -217,7 +220,68 @@ def search(
                 produced_by=str(meta.get("produced_by", "unknown")),
             )
         )
-    return results
+
+    if not config.HYBRID:
+        return candidates[:top_k]
+
+    return _rerank(question, candidates)[:top_k]
+
+
+def _tokenise(text: str) -> list[str]:
+    """Lowercase word tokens. BM25 matches literal words, so punctuation goes."""
+    import re
+
+    return re.findall(r"[a-z0-9$.]+", text.lower())
+
+
+def _rerank(question: str, candidates: list[Result]) -> list[Result]:
+    """
+    Re-rank semantic candidates by blending their similarity with a BM25 score.
+
+    Both signals are min-max normalised across the candidate pool first, because
+    a cosine distance and a BM25 score are not on the same scale. The blend is
+    HYBRID_ALPHA * semantic + (1 - HYBRID_ALPHA) * keyword.
+
+    I started with reciprocal rank fusion and it changed nothing. The reason is
+    worth recording: for the Old Brewhouse question, the wrong building's
+    laundry post out-ranked the right building's overview on BOTH lists, and RRF
+    only ever sees ranks. BM25 scored them 6.9 against 7.6 — a real gap that
+    rank fusion throws away. Blending the scores keeps it.
+
+    Distances are left exactly as Chroma returned them. The relevance gate
+    compares a real cosine distance against the cutoff measured in Milestone 4,
+    and re-ranking must not quietly change what that number means.
+    """
+    try:
+        from rank_bm25 import BM25Okapi
+    except ImportError as exc:
+        raise RuntimeError(
+            "Hybrid search needs rank-bm25. Run `pip install -r requirements.txt`, "
+            "or set HYBRID = False in config.py."
+        ) from exc
+
+    if len(candidates) < 2:
+        return candidates
+
+    bm25 = BM25Okapi([_tokenise(c.text) for c in candidates])
+    keyword = list(bm25.get_scores(_tokenise(question)))
+    semantic = [1.0 - c.distance for c in candidates]
+
+    def normalise(values: list[float]) -> list[float]:
+        low, high = min(values), max(values)
+        if high - low < 1e-9:
+            return [0.0 for _ in values]
+        return [(v - low) / (high - low) for v in values]
+
+    sem = normalise(semantic)
+    key = normalise(keyword)
+    alpha = config.HYBRID_ALPHA
+
+    blended = sorted(
+        range(len(candidates)),
+        key=lambda i: -(alpha * sem[i] + (1 - alpha) * key[i]),
+    )
+    return [candidates[i] for i in blended]
 
 
 def index_exists(corpus: str | None = None, variant: str = "default") -> bool:
