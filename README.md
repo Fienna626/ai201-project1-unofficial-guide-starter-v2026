@@ -523,6 +523,37 @@ Instrumentation is not part of my one-thing budget. The unit requires a run path
 and a log whichever shape is picked, so it comes alongside the hardening rather
 than instead of something else.
 
+
+## What's in results/
+
+Three run logs, and one of them is not what it looks like.
+
+| File | What it is |
+|---|---|
+| `run_2026-11-08_1958_before.md` | The real test, top-k 5, before last unit's fix |
+| `run_2026-11-08_2003_after.md` | The real test, top-k 3, after it |
+| `run_2026-11-08_2033_failtest.md` | **Not a test of the system's answers.** A deliberate failure injection |
+
+The third one was produced by running the evaluation with a key I knew was
+invalid:
+
+```bash
+GEMINI_API_KEY="AIzaBogus..." python run_eval.py --runs 1 --label failtest
+```
+
+Every question in it reads `FAILED (auth)`, and that is the result I wanted.
+Before the capstone work, the first failed call raised through `run_eval.py`
+and killed the whole run — the questions already answered were lost along with
+the quota they cost, and no file was written at all. Now the run completes,
+each failed attempt is recorded with its reason, and a failed run scores as
+neither pass nor fail, so an outage is never counted as the system giving a
+wrong answer.
+
+So that file is evidence about the hardening, not evidence about the retrieval.
+Nothing in it should be read as a verdict on any of my five acceptance
+criteria, and it is one run rather than three because it was not measuring
+anything that varies.
+
 ## Out of Scope
 
 Three things I considered and am deliberately not doing.
