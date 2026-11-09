@@ -265,17 +265,40 @@ This system embeds locally with `all-MiniLM-L6-v2`, so it does not fit the
 512 MB free hosting tier. It runs on a machine, started by one command, and
 leaves a record behind.
 
-**The one command**, from a clean checkout with the virtual environment active:
+**From a clean checkout.** I tested this by cloning this repository into an
+empty folder and following these steps with nothing else set up, which is the
+only way to find out what you forgot. Two things were missing the first time,
+and they are now steps 1 and 3.
 
 ```powershell
-python app.py index ; python serve.py
+python -m venv .venv                     # 1. environment
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt          # 2. dependencies
+copy .env.example .env                   # 3. then paste your key into .env
+python app.py index ; python serve.py    # 4. the run
 ```
+
+```bash
+python3 -m venv .venv                    # 1. environment
+source .venv/bin/activate
+pip install -r requirements.txt          # 2. dependencies
+cp .env.example .env                     # 3. then paste your key into .env
+python app.py index && python serve.py   # 4. the run
+```
+
+**The one command**, once steps 1 to 3 have been done once:
 
 ```bash
 python app.py index && python serve.py
 ```
 
-`index` is part of it on purpose. The vector store lives on disk under
+Skipping step 3 does not stop the service starting, which is the trap. It comes
+up, `/health` reports ready, and retrieval works — because embedding happens on
+this machine and needs no key at all. Only `/ask` fails, with a 503 and reason
+`no_key`. That is worth knowing rather than guessing at: the index and the
+answer have different dependencies.
+
+`index` is part of the run command on purpose. The vector store lives on disk under
 `chroma_db/`, which is not committed, so a clean checkout has no index and
 every `/ask` would answer "no index" until one is built. Running both is the
 difference between a command that works on my machine and one that works on

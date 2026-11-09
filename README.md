@@ -584,3 +584,145 @@ the documented single command do the same job here that a URL would.
 second is required by the unit regardless of shape, so there is one thing I
 chose. Anything that re-indexes, re-ranks, or changes what the system retrieves
 is out.
+
+## Instrumentation
+
+Every request appends one JSON object to `logs/guide.jsonl`, from the command
+line and from `serve.py` alike. `observability.py::log_request` writes them;
+`tools/logstats.py` reads them back.
+
+The field that does the most work is `outcome`, which is one of three values
+and never collapses them:
+
+- **answered** — the model returned text
+- **refused** — the gate stopped it. This is the system *working*
+- **failed** — retrieval was fine and the generation stage fell over
+
+Folding `failed` into `refused` would have been easy and would have hidden
+every outage inside a healthy-looking refusal rate. A `failed` row carries
+`best_distance` for the same reason: the entry below with `"reason": "auth"`
+also reads `"best_distance": 0.1799`, which is the proof that the corpus had
+the answer and only the API was the problem.
+
+14 real entries, pasted as text. One `startup` line and 13 requests, covering
+all three outcomes, the three failure reasons I have been able to produce on
+demand (auth, no_key, timeout), and all three sources:
+
+```json
+{"ts": "2026-11-09T04:39:22.192+00:00", "event": "startup", "source": "cli", "corpus": "campus_life", "model": "gemini-3.5-flash-lite", "top_k": 3, "threshold": 0.55, "embedding_model": "all-MiniLM-L6-v2", "hybrid": false}
+{"ts": "2026-11-09T04:30:23.959+00:00", "event": "request", "source": "cli", "question": "What does a wash and dry cost in Old Brewhouse, and how do the machines take payment?", "outcome": "answered", "reason": null, "best_distance": 0.2404, "threshold": 0.55, "top_k": 3, "n_results": 3, "sources": ["housing_fenwick_court_laundry.txt", "housing_old_brewhouse.txt", "housing_old_brewhouse_laundry.txt"], "latency_ms": 1750.0, "model_ms": 1484.0, "prompt_tokens": 419, "output_tokens": 52}
+{"ts": "2026-11-09T04:30:29.636+00:00", "event": "request", "source": "cli", "question": "What is the capital of Mongolia?", "outcome": "refused", "reason": null, "best_distance": 0.8246, "threshold": 0.55, "top_k": 3, "n_results": 3, "sources": [], "latency_ms": 250.0, "model_ms": null, "prompt_tokens": 0, "output_tokens": 0}
+{"ts": "2026-11-09T04:31:51.850+00:00", "event": "request", "source": "http", "question": "How often does the campus shuttle run on weekends?", "outcome": "answered", "reason": null, "best_distance": 0.1799, "threshold": 0.55, "top_k": 3, "n_results": 3, "sources": ["course_stat_150_workload.txt", "dining_verrill_street_grill.txt", "transit_shuttle.txt"], "latency_ms": 1797.0, "model_ms": 1672.0, "prompt_tokens": 400, "output_tokens": 22}
+{"ts": "2026-11-09T04:31:52.114+00:00", "event": "request", "source": "http", "question": "Who won the 1994 World Cup?", "outcome": "refused", "reason": null, "best_distance": 0.8859, "threshold": 0.55, "top_k": 3, "n_results": 3, "sources": [], "latency_ms": 16.0, "model_ms": null, "prompt_tokens": 0, "output_tokens": 0}
+{"ts": "2026-11-09T04:31:58.967+00:00", "event": "request", "source": "http", "question": "what are the library hours", "outcome": "answered", "reason": null, "best_distance": 0.3848, "threshold": 0.55, "top_k": 3, "n_results": 3, "sources": ["admin_library_holds.txt", "housing_morrow_house_noise.txt", "study_library_hours.txt"], "latency_ms": 672.0, "model_ms": 640.0, "prompt_tokens": 347, "output_tokens": 45}
+{"ts": "2026-11-09T04:32:06.338+00:00", "event": "request", "source": "http", "question": "How often does the campus shuttle run on weekends?", "outcome": "answered", "reason": null, "best_distance": 0.1799, "threshold": 0.55, "top_k": 3, "n_results": 3, "sources": ["course_stat_150_workload.txt", "dining_verrill_street_grill.txt", "transit_shuttle.txt"], "latency_ms": 31.0, "model_ms": 0.0, "prompt_tokens": 0, "output_tokens": 0}
+{"ts": "2026-11-09T04:32:59.009+00:00", "event": "request", "source": "http", "question": "How often does the campus shuttle run on weekends?", "outcome": "failed", "reason": "auth", "best_distance": 0.1799, "threshold": 0.55, "top_k": 3, "n_results": 3, "sources": ["course_stat_150_workload.txt", "dining_verrill_street_grill.txt", "transit_shuttle.txt"], "latency_ms": 1406.0, "model_ms": 1140.0, "prompt_tokens": 0, "output_tokens": 0}
+{"ts": "2026-11-09T04:34:09.490+00:00", "event": "request", "source": "cli", "question": "How late in the semester can I declare a course pass/fail?", "outcome": "answered", "reason": null, "best_distance": 0.2058, "threshold": 0.55, "top_k": 3, "n_results": 3, "sources": ["admin_add_drop_deadline.txt", "admin_declaring_a_major.txt", "admin_pass_fail_option.txt"], "latency_ms": 1735.0, "model_ms": 1469.0, "prompt_tokens": 358, "output_tokens": 34}
+{"ts": "2026-11-09T04:39:01.943+00:00", "event": "request", "source": "cost-measurement", "question": "How long do students say the wait at Kestrel Commons is between 12:15 and 1:00?", "outcome": "answered", "reason": null, "best_distance": 0.1978, "threshold": 0.55, "top_k": 3, "n_results": 3, "sources": ["dining_halden_hall_followup.txt", "dining_kestrel_commons_followup.txt", "transit_walking.txt"], "latency_ms": 2094.0, "model_ms": 1844.0, "prompt_tokens": 452, "output_tokens": 48}
+{"ts": "2026-11-09T04:39:02.608+00:00", "event": "request", "source": "cost-measurement", "question": "How late in the semester can I declare a course pass/fail?", "outcome": "answered", "reason": null, "best_distance": 0.2058, "threshold": 0.55, "top_k": 3, "n_results": 3, "sources": ["admin_add_drop_deadline.txt", "admin_declaring_a_major.txt", "admin_pass_fail_option.txt"], "latency_ms": 656.0, "model_ms": 641.0, "prompt_tokens": 358, "output_tokens": 34}
+{"ts": "2026-11-09T04:39:03.344+00:00", "event": "request", "source": "cost-measurement", "question": "What does a wash and dry cost in Old Brewhouse, and how do the machines take payment?", "outcome": "answered", "reason": null, "best_distance": 0.2404, "threshold": 0.55, "top_k": 3, "n_results": 3, "sources": ["housing_fenwick_court_laundry.txt", "housing_old_brewhouse.txt", "housing_old_brewhouse_laundry.txt"], "latency_ms": 734.0, "model_ms": 703.0, "prompt_tokens": 419, "output_tokens": 63}
+{"ts": "2026-11-09T04:39:23.280+00:00", "event": "request", "source": "cli", "question": "What does a wash and dry cost in Old Brewhouse, and how do the machines take payment?", "outcome": "failed", "reason": "no_key", "best_distance": 0.2404, "threshold": 0.55, "top_k": 3, "n_results": 3, "sources": ["housing_fenwick_court_laundry.txt", "housing_old_brewhouse.txt", "housing_old_brewhouse_laundry.txt"], "latency_ms": 641.0, "model_ms": 391.0, "prompt_tokens": 0, "output_tokens": 0}
+{"ts": "2026-11-09T04:39:25.724+00:00", "event": "request", "source": "cli", "question": "How often does the campus shuttle run on weekends?", "outcome": "failed", "reason": "timeout", "best_distance": 0.1799, "threshold": 0.55, "top_k": 3, "n_results": 3, "sources": ["course_stat_150_workload.txt", "dining_verrill_street_grill.txt", "transit_shuttle.txt"], "latency_ms": 1297.0, "model_ms": 1000.0, "prompt_tokens": 0, "output_tokens": 0}
+```
+
+**Reading it back** with `python tools/logstats.py`, over the whole log as it
+stands:
+
+```
+  22 requests over 9 sessions
+
+Outcomes
+  answered    16    73%
+  refused      2     9%
+  failed       4    18%
+
+Failure reasons
+  auth            2
+  no_key          1
+  timeout         1
+
+Where requests came from
+  cost-measurement 10
+  cli    6
+  http   6
+
+Latency, end to end (ms)
+  median      703
+  p95        1797
+  max        2094
+
+Model call (ms)
+  median      703  (100% of a median request)
+
+Cost, from the service's own numbers
+  5504 prompt + 649 output tokens over 16 answered requests
+  344 in / 41 out per answered request
+  Refused and failed requests cost 0 tokens: the gate stops a refusal
+  before the model, and a failure never got an answer back.
+
+Best retrieval distance
+  median 0.206  min 0.180  max 0.886
+```
+
+`model_ms` sitting at essentially 100% of a median request is the single most
+useful thing the log has told me. Retrieval, the gate and chunk assembly are
+collectively in the noise — embedding runs on this machine and the index is
+103 chunks, so the whole local half of the pipeline costs a few milliseconds.
+Every bit of latency worth attacking is in the one network call.
+
+
+## What It Costs
+
+**One request: 448 tokens and 886 ms. One run of all five test questions:
+2,238 tokens and 4.4 seconds.**
+
+Measured with `tools/measure_cost.py`, which asks the five test questions twice
+over with caching forced off - ten real requests, no cached answers.
+
+| | Per request, mean of 10 | Per run of 5 questions |
+|---|---|---|
+| Input tokens | 398.0 | 1,990 |
+| Output tokens | 49.6 | 248 |
+| Total tokens | 447.6 | 2,238 |
+| Latency | 886 ms (median 703, max 2,532) | 4,430 ms |
+| Model calls | 1 | 5 |
+
+**How I measured it, rather than where I looked it up.**
+
+Token counts are read off `usage_metadata` on each response by
+`generate.py::_record_tokens` - they are what the service reported it charged.
+I did not multiply a prompt length by a number from a pricing page; the two
+disagree more often than you would expect and only one of them is evidence.
+
+Latency is `time.monotonic` around the whole pipeline, so it includes
+retrieval, the gate and the model call together rather than the API call alone.
+
+Caching is forced off for the whole process (`AI201_CACHE=0`, asserted at
+startup in the script). A cached answer returns in about a millisecond and
+costs nothing, so leaving the cache on would have produced a beautiful average
+that measured nothing.
+
+**Three things the numbers say that I did not expect.**
+
+The mean latency of 886 ms is dragged up by one request. The first call of the
+process took 2,532 ms and every later one landed between 594 and 890 ms - that
+first one pays to load the embedding model. The median of 703 ms is the honest
+number for a warm process, and it is why `serve.py`, which stays up, is a
+cheaper way to run this than the CLI, which does not.
+
+Input dominates output roughly eight to one: 398 tokens in against 49.6 out.
+That is what a retrieval system is - most of what you pay for is the documents
+you chose to send. It is also why last unit's `top_k` 5 to 3 change was worth
+more than it looked: cutting two chunks from every prompt cut about a third of
+the input tokens, and input is where the cost is.
+
+Refused and failed requests cost zero tokens, and that is not an accident. The
+gate refuses before the model is called, so an out-of-corpus question costs
+only the ~250 ms of local embedding and retrieval. A failed request costs
+nothing either, because it never got an answer back. The only requests that
+cost anything are the ones that produced something.
+
+**What this does not include.** Embedding is free in quota terms and runs
+locally, so it appears in the latency and nowhere in the token count. The
+~80 MB model download happens once. Disk is about 90 MB of model plus 5 MB of
+index. There is no hosting cost because this is Path B.

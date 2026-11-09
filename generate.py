@@ -190,10 +190,11 @@ def _get_client():
 
         key = os.getenv("GEMINI_API_KEY", "").strip()
         if not key:
-            raise RuntimeError(
-                "No GEMINI_API_KEY found.\n"
-                "Copy .env.example to .env and paste your key in, then try "
-                "again. `python test.py` will confirm it's working."
+            raise GenerationFailure(
+                "no_key",
+                "No GEMINI_API_KEY found. Copy .env.example to .env and "
+                "paste your key in, then try again. `python test.py` will "
+                "confirm it's working.",
             )
         # A deadline on every call. See config.REQUEST_TIMEOUT for why.
         _client = genai.Client(

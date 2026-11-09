@@ -51,6 +51,12 @@ class GenerationFailure(Exception):
 # Ordered most specific first — the first match wins, so `auth` is checked
 # before the generic `service` bucket that a 400 would otherwise land in.
 _SIGNATURES: list[tuple[str, tuple[str, ...]]] = [
+    # Checked before `auth` because they want different fixes: `no_key` means
+    # nobody has set GEMINI_API_KEY, `auth` means they set one and the service
+    # rejected it. Found by cloning this repo into an empty folder and
+    # following RUNNING.md, where a fresh checkout has no .env at all and the
+    # whole thing was landing in `unknown`.
+    ("no_key", ("no gemini_api_key", "gemini_api_key found", "no api key")),
     ("auth", ("api key not valid", "api_key_invalid", "unauthenticated",
               "permission denied", "401", "403")),
     ("quota", ("quota", "resource_exhausted", "resource exhausted")),
@@ -84,6 +90,8 @@ def classify(exc: BaseException) -> str:
 def describe(reason: str) -> str:
     """A short human sentence for a reason code, for the command line."""
     return {
+        "no_key": "no GEMINI_API_KEY is set — copy .env.example to .env and "
+                  "paste your key in",
         "auth": "the API key was rejected — check GEMINI_API_KEY in .env",
         "quota": "the daily quota is used up — it resets tomorrow",
         "rate_limit": "still rate limited after retrying — wait a minute",
