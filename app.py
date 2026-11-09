@@ -183,6 +183,7 @@ def ask_pipeline(
     threshold=None,
     on_gate=None,
     on_prompt=None,
+    source="cli",
 ):
     """Retrieve, gate, answer. Returns the outcome and prints nothing.
 
@@ -201,38 +202,76 @@ def ask_pipeline(
     """
     from store import search
     import gate
-    from generate import answer_from_chunks, build_prompt
+    from generate import answer_from_chunks, build_prompt, token_counts
+    from failures import GenerationFailure, UNAVAILABLE
+    import observability as obs
 
-    results = search(
-        question,
-        top_k=top_k or config.TOP_K,
-        corpus=corpus or config.CORPUS,
-        variant=variant,
+    before = token_counts()
+
+    with obs.Timer() as whole:
+        results = search(
+            question,
+            top_k=top_k or config.TOP_K,
+            corpus=corpus or config.CORPUS,
+            variant=variant,
+        )
+        decision = gate.check(results, threshold=threshold)
+        if on_gate is not None:
+            on_gate(decision)
+
+        outcome = {
+            "question": question,
+            "refused": not decision.passed,
+            "failed": False,
+            "reason": None,
+            "best_distance": decision.best_distance,
+            "threshold": decision.threshold,
+            "sources": [],
+            "prompt": None,
+        }
+
+        model_ms = None
+
+        if not decision.passed:
+            outcome["answer"] = gate.REFUSAL
+        else:
+            prompt = build_prompt(question, results)
+            if on_prompt is not None:
+                on_prompt(prompt)
+            outcome["prompt"] = prompt
+
+            try:
+                with obs.Timer() as call:
+                    outcome["answer"] = answer_from_chunks(question, results)
+                model_ms = call.ms
+                outcome["sources"] = sorted({r.source for r in results})
+            except GenerationFailure as failure:
+                # Retrieval worked and the gate let it through; only the model
+                # call fell over. The reader gets a message that says so rather
+                # than the gate's refusal, which would be untrue here.
+                model_ms = call.ms
+                outcome["failed"] = True
+                outcome["reason"] = failure.reason
+                outcome["answer"] = UNAVAILABLE
+                outcome["sources"] = sorted({r.source for r in results})
+
+    after = token_counts()
+    obs.log_request(
+        source=source,
+        question=question,
+        outcome=("failed" if outcome["failed"]
+                 else "refused" if outcome["refused"]
+                 else "answered"),
+        reason=outcome["reason"],
+        best_distance=decision.best_distance,
+        threshold=decision.threshold,
+        n_results=len(results),
+        sources=outcome["sources"],
+        latency_ms=whole.ms,
+        model_ms=model_ms,
+        prompt_tokens=after["prompt"] - before["prompt"],
+        output_tokens=after["output"] - before["output"],
     )
-    decision = gate.check(results, threshold=threshold)
-    if on_gate is not None:
-        on_gate(decision)
-
-    outcome = {
-        "question": question,
-        "refused": not decision.passed,
-        "best_distance": decision.best_distance,
-        "threshold": decision.threshold,
-        "sources": [],
-        "prompt": None,
-    }
-
-    if not decision.passed:
-        outcome["answer"] = gate.REFUSAL
-        return outcome
-
-    prompt = build_prompt(question, results)
-    if on_prompt is not None:
-        on_prompt(prompt)
-
-    outcome["prompt"] = prompt
-    outcome["answer"] = answer_from_chunks(question, results)
-    outcome["sources"] = sorted({r.source for r in results})
     return outcome
 
 
@@ -277,6 +316,13 @@ def _ask_one(
         print(f"\n{gate.REFUSAL}\n")
         return gate.REFUSAL
 
+    if outcome["failed"]:
+        from failures import describe
+
+        print(f"\n{outcome['answer']}\n")
+        print(f"  (generation failed: {describe(outcome['reason'])})\n")
+        return outcome["answer"]
+
     print(f"\n{outcome['answer']}\n")
     print(f"Sources retrieved: {', '.join(outcome['sources'])}\n")
     return outcome["answer"]
@@ -285,6 +331,9 @@ def _ask_one(
 def cmd_ask(args):
     corpus = args.corpus or config.CORPUS
     import generate as gen
+    import observability as obs
+
+    obs.log_startup("cli")
 
     try:
         if args.question:
