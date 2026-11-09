@@ -62,7 +62,7 @@ in at least 4 of 5 tries.
 
 ---
 
-## 4. Something about your chunks
+## 4. No chunk is a bare title line
 
 <!-- YOU WRITE THIS ONE.
 
@@ -78,13 +78,12 @@ in at least 4 of 5 tries.
 No chunk is a bare title line: all 10 chunks sampled with python app.py chunks -n 10 contain at least one full sentence of body text under the heading.
 
 
-**Why this target:**
-Why: Every doc is Title\n\nBody, so any strategy that splits on paragraph breaks strands the heading as its own useless chunk
+**Why this target:** Every doc is Title\n\nBody, so any strategy that splits on paragraph breaks strands the heading as its own useless chunk
 
 
 ---
 
-## 5. Your choice
+## 5. Citations point at the document that actually has the fact
 
 <!-- YOU WRITE THIS ONE TOO.
 
