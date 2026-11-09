@@ -83,6 +83,13 @@ REQUESTS_PER_MINUTE = 30       # outgoing calls the limiter will allow per minut
 SESSION_REQUEST_BUDGET = 300   # stop and warn rather than draining the daily quota
 MAX_RETRIES = 4                # on 429 / resource-exhausted, with backoff
 
+# How long one model call may take before it is abandoned. Without this the
+# call has no deadline at all: a service that accepts the connection and then
+# stops responding hangs the whole run with nothing printed. 30s is well clear
+# of a normal call, which lands around 1-2s on this corpus.
+REQUEST_TIMEOUT = 30           # seconds
+
+
 CACHE_ENABLED = os.getenv("AI201_CACHE", "1") != "0"
 CACHE_DIR = ROOT / ".cache"
 

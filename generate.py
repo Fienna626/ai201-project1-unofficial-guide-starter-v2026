@@ -34,6 +34,7 @@ import sys
 import time
 
 import config
+from failures import GenerationFailure, classify
 
 _call_times: list[float] = []
 _session_calls = 0
@@ -194,7 +195,11 @@ def _get_client():
                 "Copy .env.example to .env and paste your key in, then try "
                 "again. `python test.py` will confirm it's working."
             )
-        _client = genai.Client(api_key=key)
+        # A deadline on every call. See config.REQUEST_TIMEOUT for why.
+        _client = genai.Client(
+            api_key=key,
+            http_options={"timeout": config.REQUEST_TIMEOUT * 1000},
+        )
     return _client
 
 
@@ -241,9 +246,21 @@ def generate(prompt: str, system: str | None = None, cache: bool = True) -> str:
             _record_tokens(response)
             text = (response.text or "").strip()
 
+            if not text:
+                # A 200 with no text in it. Returning "" would travel all the
+                # way to the reader as a blank answer, which looks like the
+                # system deciding to say nothing rather than failing.
+                raise GenerationFailure(
+                    "empty_response",
+                    "the service returned a response with no text",
+                )
+
             if use_cache:
                 _cache_write(key, text)
             return text
+
+        except GenerationFailure:
+            raise  # already named; nothing here can improve on it
 
         except Exception as exc:  # noqa: BLE001 — surfaced below
             last_error = exc
@@ -254,7 +271,11 @@ def generate(prompt: str, system: str | None = None, cache: bool = True) -> str:
                 or "rate" in message and "limit" in message
             )
             if not rate_limited:
-                raise
+                # Everything that is not a rate limit ends here rather than
+                # unwinding to a traceback. The retry loop above only knows how
+                # to help with pushback; an expired key or a 500 will not get
+                # better by waiting, so it is named and handed back.
+                raise GenerationFailure(classify(exc), str(exc)) from exc
             backoff = 2 ** attempt
             print(
                 f"  [rate limit] service pushed back. Retrying in {backoff}s "
@@ -264,9 +285,10 @@ def generate(prompt: str, system: str | None = None, cache: bool = True) -> str:
             )
             time.sleep(backoff)
 
-    raise RuntimeError(
-        f"Still rate limited after {config.MAX_RETRIES} attempts. Wait a "
-        f"minute and try again — your key is fine.\nLast error: {last_error}"
+    raise GenerationFailure(
+        "rate_limit",
+        f"still rate limited after {config.MAX_RETRIES} attempts; "
+        f"last error: {last_error}",
     )
 
 
